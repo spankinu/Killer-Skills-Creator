@@ -3,8 +3,6 @@
 <head>
   <meta charset="UTF-8" />
   <title>Skill Tree</title>
-
-  <!-- Viewport for mobile responsiveness -->
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 
   <style>
@@ -15,7 +13,7 @@
       background-size: cover;
       background-position: center;
       overflow: hidden;
-      touch-action: none; /* Prevent double-tap zoom */
+      touch-action: none;
     }
 
     #toolbar {
@@ -55,6 +53,7 @@
       width: 100vw;
       height: calc(100vh - 50px);
       overflow: auto;
+      touch-action: none;
     }
 
     .skill {
@@ -73,6 +72,7 @@
       font-weight: bold;
       color: white;
       text-shadow: 1px 1px 2px black;
+      touch-action: none;
     }
 
     .skill:hover {
@@ -95,6 +95,7 @@
       white-space: pre-line;
       max-width: 200px;
       font-size: 14px;
+      transition: opacity 0.2s;
     }
   </style>
 </head>
@@ -159,7 +160,7 @@
       skills.forEach(skill => {
         if (skill.category === oldName) skill.category = newName;
       });
-      renderCategories(); // rerender to update all inputs properly
+      renderCategories();
     });
     div.appendChild(input);
     categoriesEl.appendChild(div);
@@ -191,11 +192,12 @@
 
       let dragging = false;
       let dragOffsetX = 0, dragOffsetY = 0;
-      let lastTouch = null;
+      let lastTouchX = null, lastTouchY = null;
       let longPressTimer = null;
       let movedDuringTouch = false;
+      let longPressActive = false;
 
-      // Desktop drag start
+      // Desktop drag
       div.onmousedown = e => {
         if (e.button !== 0) return;
         dragging = true;
@@ -203,7 +205,6 @@
         dragOffsetY = e.clientY - skill.y;
         e.preventDefault();
       };
-      // Desktop drag move
       document.onmousemove = e => {
         if (dragging) {
           skill.x = e.clientX - dragOffsetX;
@@ -212,32 +213,34 @@
           div.style.top = skill.y + 'px';
         }
       };
-      // Desktop drag end
       document.onmouseup = e => {
         dragging = false;
       };
 
-      // Mobile touch start
+      // Mobile drag + description
       div.ontouchstart = e => {
-        if (e.touches.length !== 1) return; // single touch only
-        lastTouch = e.touches[0];
-        dragOffsetX = lastTouch.clientX - skill.x;
-        dragOffsetY = lastTouch.clientY - skill.y;
+        if (e.touches.length !== 1) return;
+        const touch = e.touches[0];
+        lastTouchX = touch.clientX;
+        lastTouchY = touch.clientY;
+        dragOffsetX = lastTouchX - skill.x;
+        dragOffsetY = lastTouchY - skill.y;
         dragging = true;
         movedDuringTouch = false;
+        longPressActive = false;
 
-        // Start long press timer for showing description
+        // Long press for description (quicker: 350ms)
         longPressTimer = setTimeout(() => {
-          tooltip.style.left = (lastTouch.clientX + 10) + 'px';
-          tooltip.style.top = (lastTouch.clientY + 10) + 'px';
+          longPressActive = true;
+          tooltip.style.left = (lastTouchX + 10) + 'px';
+          tooltip.style.top = (lastTouchY + 10) + 'px';
           tooltip.innerText = `${skill.name}\n\n${skill.description}`;
           tooltip.style.display = 'block';
-        }, 600);
+          tooltip.style.opacity = '1';
+        }, 350);
 
         e.preventDefault();
       };
-
-      // Mobile touch move
       div.ontouchmove = e => {
         if (!dragging) return;
         const touch = e.touches[0];
@@ -245,38 +248,58 @@
         skill.y = touch.clientY - dragOffsetY;
         div.style.left = skill.x + 'px';
         div.style.top = skill.y + 'px';
-
+        lastTouchX = touch.clientX;
+        lastTouchY = touch.clientY;
         movedDuringTouch = true;
 
-        // Cancel long press for description if moving
+        // Hide tooltip if moving
         clearTimeout(longPressTimer);
         tooltip.style.display = 'none';
+        longPressActive = false;
         e.preventDefault();
       };
-
-      // Mobile touch end
       div.ontouchend = e => {
         dragging = false;
         clearTimeout(longPressTimer);
-        if (!movedDuringTouch) {
-          // Tap = add point
+
+        // If not moved and no long press, treat as tap (add point)
+        if (!movedDuringTouch && !longPressActive) {
           if (points.points < points.max) {
             points.points++;
             updateTotal();
             pointText.innerText = `${points.points}/${points.max}`;
           }
         }
-      };
-
-      // Left click add point (desktop)
-      div.onclick = e => {
-        if (dragging) return; // ignore click if dragging
-        if (points.points < points.max) {
-          points.points++;
-          updateTotal();
-          pointText.innerText = `${points.points}/${points.max}`;
+        // If long press was active, hide tooltip after finger leaves
+        if (longPressActive) {
+          setTimeout(() => {
+            tooltip.style.display = 'none';
+            longPressActive = false;
+          }, 2000);
         }
       };
+
+      // Tap to show description (mobile and desktop)
+      div.addEventListener('click', e => {
+        if (dragging) return;
+        // On desktop, left click adds point; on mobile, tap shows description if touch wasn't a drag
+        if (window.matchMedia('(pointer: coarse)').matches) {
+          tooltip.style.left = (e.pageX + 10) + 'px';
+          tooltip.style.top = (e.pageY + 10) + 'px';
+          tooltip.innerText = `${skill.name}\n\n${skill.description}`;
+          tooltip.style.display = 'block';
+          tooltip.style.opacity = '1';
+          setTimeout(() => {
+            tooltip.style.display = 'none';
+          }, 2000);
+        } else {
+          if (points.points < points.max) {
+            points.points++;
+            updateTotal();
+            pointText.innerText = `${points.points}/${points.max}`;
+          }
+        }
+      });
 
       // Right click remove point (desktop)
       div.oncontextmenu = e => {
@@ -294,6 +317,7 @@
         tooltip.style.top = (e.pageY + 10) + 'px';
         tooltip.innerText = `${skill.name}\n\n${skill.description}`;
         tooltip.style.display = 'block';
+        tooltip.style.opacity = '1';
         setTimeout(() => tooltip.style.display = 'none', 3000);
       };
 
