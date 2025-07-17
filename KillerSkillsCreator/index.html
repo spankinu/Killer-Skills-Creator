@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <title>Skill Tree</title>
 
-  <!-- ✅ Viewport for mobile responsiveness -->
+  <!-- Viewport for mobile responsiveness -->
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 
   <style>
@@ -92,6 +92,9 @@
       border-radius: 5px;
       pointer-events: none;
       z-index: 999;
+      white-space: pre-line;
+      max-width: 200px;
+      font-size: 14px;
     }
   </style>
 </head>
@@ -106,7 +109,6 @@
 <div id="tooltip" class="tooltip" style="display:none;"></div>
 
 <script>
-  const defaultCategories = ['Offense', 'Defense', 'Magic'];
   const categoriesEl = document.getElementById('categories');
   const skillTree = document.getElementById('skillTree');
   const totalPointsEl = document.getElementById('totalPoints');
@@ -152,10 +154,12 @@
     const input = document.createElement('input');
     input.value = name;
     input.addEventListener('input', () => {
-      const newName = input.value;
+      const oldName = name;
+      const newName = input.value.trim() || oldName;
       skills.forEach(skill => {
-        if (skill.category === name) skill.category = newName;
+        if (skill.category === oldName) skill.category = newName;
       });
+      renderCategories(); // rerender to update all inputs properly
     });
     div.appendChild(input);
     categoriesEl.appendChild(div);
@@ -178,7 +182,6 @@
       div.dataset.id = skill.id;
 
       const points = skillState[skill.id] = { points: 0, max: skill.maxPoints };
-
       const pointText = document.createElement('div');
       pointText.innerText = `0/${skill.maxPoints}`;
       pointText.style.backgroundColor = 'rgba(0,0,0,0.5)';
@@ -186,70 +189,113 @@
       pointText.style.textAlign = 'center';
       div.appendChild(pointText);
 
-      // 🧠 Mouse/touch drag
-      let offsetX, offsetY, dragging = false;
+      let dragging = false;
+      let dragOffsetX = 0, dragOffsetY = 0;
+      let lastTouch = null;
+      let longPressTimer = null;
+      let movedDuringTouch = false;
+
+      // Desktop drag start
       div.onmousedown = e => {
         if (e.button !== 0) return;
-        offsetX = e.offsetX;
-        offsetY = e.offsetY;
         dragging = true;
+        dragOffsetX = e.clientX - skill.x;
+        dragOffsetY = e.clientY - skill.y;
+        e.preventDefault();
       };
-      div.ontouchstart = e => {
-        const t = e.touches[0];
-        offsetX = t.clientX - skill.x;
-        offsetY = t.clientY - skill.y;
-        dragging = true;
-      };
-      document.addEventListener('mousemove', e => {
+      // Desktop drag move
+      document.onmousemove = e => {
         if (dragging) {
-          skill.x = e.pageX - offsetX;
-          skill.y = e.pageY - offsetY - 50;
+          skill.x = e.clientX - dragOffsetX;
+          skill.y = e.clientY - dragOffsetY;
           div.style.left = skill.x + 'px';
           div.style.top = skill.y + 'px';
         }
-      });
-      document.addEventListener('touchmove', e => {
-        if (dragging) {
-          const t = e.touches[0];
-          skill.x = t.clientX - offsetX;
-          skill.y = t.clientY - offsetY - 50;
-          div.style.left = skill.x + 'px';
-          div.style.top = skill.y + 'px';
-        }
-      });
-      document.addEventListener('mouseup', () => dragging = false);
-      document.addEventListener('touchend', () => dragging = false);
+      };
+      // Desktop drag end
+      document.onmouseup = e => {
+        dragging = false;
+      };
 
-      // 🖱️ Left click = Add point
-      div.addEventListener('click', e => {
+      // Mobile touch start
+      div.ontouchstart = e => {
+        if (e.touches.length !== 1) return; // single touch only
+        lastTouch = e.touches[0];
+        dragOffsetX = lastTouch.clientX - skill.x;
+        dragOffsetY = lastTouch.clientY - skill.y;
+        dragging = true;
+        movedDuringTouch = false;
+
+        // Start long press timer for showing description
+        longPressTimer = setTimeout(() => {
+          tooltip.style.left = (lastTouch.clientX + 10) + 'px';
+          tooltip.style.top = (lastTouch.clientY + 10) + 'px';
+          tooltip.innerText = `${skill.name}\n\n${skill.description}`;
+          tooltip.style.display = 'block';
+        }, 600);
+
+        e.preventDefault();
+      };
+
+      // Mobile touch move
+      div.ontouchmove = e => {
+        if (!dragging) return;
+        const touch = e.touches[0];
+        skill.x = touch.clientX - dragOffsetX;
+        skill.y = touch.clientY - dragOffsetY;
+        div.style.left = skill.x + 'px';
+        div.style.top = skill.y + 'px';
+
+        movedDuringTouch = true;
+
+        // Cancel long press for description if moving
+        clearTimeout(longPressTimer);
+        tooltip.style.display = 'none';
+        e.preventDefault();
+      };
+
+      // Mobile touch end
+      div.ontouchend = e => {
+        dragging = false;
+        clearTimeout(longPressTimer);
+        if (!movedDuringTouch) {
+          // Tap = add point
+          if (points.points < points.max) {
+            points.points++;
+            updateTotal();
+            pointText.innerText = `${points.points}/${points.max}`;
+          }
+        }
+      };
+
+      // Left click add point (desktop)
+      div.onclick = e => {
+        if (dragging) return; // ignore click if dragging
         if (points.points < points.max) {
           points.points++;
           updateTotal();
           pointText.innerText = `${points.points}/${points.max}`;
         }
-      });
+      };
 
-      // 📱 Mobile long-press = Remove point
-      let pressTimer = null;
-      div.addEventListener('touchstart', () => {
-        pressTimer = setTimeout(() => {
-          if (points.points > 0) {
-            points.points--;
-            updateTotal();
-            pointText.innerText = `${points.points}/${points.max}`;
-          }
-        }, 600); // 600ms long press
-      });
-      div.addEventListener('touchend', () => clearTimeout(pressTimer));
+      // Right click remove point (desktop)
+      div.oncontextmenu = e => {
+        e.preventDefault();
+        if (points.points > 0) {
+          points.points--;
+          updateTotal();
+          pointText.innerText = `${points.points}/${points.max}`;
+        }
+      };
 
-      // 🧾 Double click = Show description
-      div.addEventListener('dblclick', e => {
+      // Double click shows description on desktop
+      div.ondblclick = e => {
         tooltip.style.left = (e.pageX + 10) + 'px';
         tooltip.style.top = (e.pageY + 10) + 'px';
         tooltip.innerText = `${skill.name}\n\n${skill.description}`;
         tooltip.style.display = 'block';
         setTimeout(() => tooltip.style.display = 'none', 3000);
-      });
+      };
 
       skillTree.appendChild(div);
     });
