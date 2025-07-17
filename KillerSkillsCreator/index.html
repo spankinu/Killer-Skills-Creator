@@ -152,10 +152,26 @@
     padding: 8px 12px;
     border-radius: 10px;
     font-size: 15px;
-    pointer-events: none;
+    pointer-events: auto;
     min-width: 120px;
     max-width: 220px;
     box-shadow: 2px 2px 8px #000;
+  }
+  .skill-tooltip .minus-btn {
+    display: inline-block;
+    background: #333;
+    color: #ff6666;
+    border: none;
+    border-radius: 4px;
+    font-size: 16px;
+    margin-left: 8px;
+    cursor: pointer;
+    padding: 2px 6px;
+    font-weight: bold;
+    vertical-align: middle;
+  }
+  .skill-tooltip .minus-btn:active {
+    background: #111;
   }
 </style>
 </head>
@@ -244,11 +260,18 @@
   const skillSize = 60;
   const hitPadding = 4;
 
+  // Zoom and pan state
+  let viewScale = 1;
+  let viewOffsetX = 0;
+  let viewOffsetY = 0;
+  let isPanning = false;
+  let panLast = null;
+
+  // Skill drag state (desktop)
   let isDragging = false;
   let draggedSkill = null;
   let dragOffsetX = 0;
   let dragOffsetY = 0;
-  let hoveredSkill = null;
 
   // Mobile touch state
   let lastTouchSkill = null;
@@ -259,9 +282,24 @@
   let longPressTriggered = false;
   let draggingTouchSkill = null;
   let draggingTouchOffset = null;
+  let pinchStartDist = null;
+  let pinchStartScale = null;
+  let pinchStartOffset = null;
 
   // Splitter dragging state
   let isResizing = false;
+
+  // Throttle redraws
+  let needsDraw = false;
+  function scheduleDraw() {
+    if (!needsDraw) {
+      needsDraw = true;
+      requestAnimationFrame(() => {
+        drawTree();
+        needsDraw = false;
+      });
+    }
+  }
 
   splitter.addEventListener('mousedown', (e) => {
     isResizing = true;
@@ -279,7 +317,7 @@
 
     controls.style.width = newWidth + 'px';
     resizeCanvas();
-    drawTree();
+    scheduleDraw();
   });
 
   window.addEventListener('mouseup', () => {
@@ -367,7 +405,7 @@
       cat.name = newName;
       renderCategoriesList();
       updateCategorySelect();
-      drawTree();
+      scheduleDraw();
     }
   }
 
@@ -386,18 +424,16 @@
 
   function getMousePos(evt) {
     const rect = canvas.getBoundingClientRect();
-    return {
-      x: evt.clientX - rect.left,
-      y: evt.clientY - rect.top
-    };
+    const x = (evt.clientX - rect.left - viewOffsetX) / viewScale;
+    const y = (evt.clientY - rect.top - viewOffsetY) / viewScale;
+    return {x, y};
   }
 
   function getTouchPos(touch) {
     const rect = canvas.getBoundingClientRect();
-    return {
-      x: touch.clientX - rect.left,
-      y: touch.clientY - rect.top
-    };
+    const x = (touch.clientX - rect.left - viewOffsetX) / viewScale;
+    const y = (touch.clientY - rect.top - viewOffsetY) / viewScale;
+    return {x, y};
   }
 
   function updateSkillPointsCounter() {
@@ -430,12 +466,12 @@
     const id = Date.now();
     const margin = skillSize;
     const x = Math.min(
-      Math.max(Math.random() * (canvas.width - 2 * margin) + margin, margin),
-      canvas.width - margin
+      Math.max(Math.random() * (canvas.width/viewScale - 2 * margin) + margin, margin),
+      canvas.width/viewScale - margin
     );
     const y = Math.min(
-      Math.max(Math.random() * (canvas.height - 2 * margin) + margin, margin),
-      canvas.height - margin
+      Math.max(Math.random() * (canvas.height/viewScale - 2 * margin) + margin, margin),
+      canvas.height/viewScale - margin
     );
 
     function finishAdding(imgData, imgObj) {
@@ -455,7 +491,7 @@
       });
       updatePrereqDropdown();
       updateSkillPointsCounter();
-      drawTree();
+      scheduleDraw();
 
       document.getElementById("skillName").value = "";
       document.getElementById("skillDesc").value = "";
@@ -493,7 +529,7 @@
       updateCategorySelect();
       renderCategoriesList();
       updateSkillPointsCounter();
-      drawTree();
+      scheduleDraw();
       document.getElementById("shareLink").value = "";
       history.replaceState(null, '', window.location.pathname);
       resizeCanvas();
@@ -519,11 +555,14 @@
   }
 
   function drawTree() {
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
+    ctx.setTransform(viewScale, 0, 0, viewScale, viewOffsetX, viewOffsetY);
+
     if (backgroundImg) {
-      const bgX = (canvas.width - backgroundImg.width) / 2;
-      const bgY = (canvas.height - backgroundImg.height) / 2;
+      const bgX = (canvas.width/viewScale - backgroundImg.width) / 2;
+      const bgY = (canvas.height/viewScale - backgroundImg.height) / 2;
       ctx.drawImage(backgroundImg, bgX, bgY);
     }
 
@@ -583,6 +622,12 @@
 
   // Desktop mouse events for dragging and skill points add/remove
   canvas.addEventListener("mousedown", (e) => {
+    if (e.button === 1) { // Middle mouse = pan
+      isPanning = true;
+      panLast = {x: e.clientX, y: e.clientY};
+      e.preventDefault();
+      return;
+    }
     const pos = getMousePos(e);
     const clickedSkill = skills.find(skill =>
       pos.x >= skill.x - skillSize / 2 - hitPadding &&
@@ -596,7 +641,7 @@
       if (clickedSkill.points < clickedSkill.maxPoints) {
         clickedSkill.points++;
         updateSkillPointsCounter();
-        drawTree();
+        scheduleDraw();
       }
       isDragging = true;
       draggedSkill = clickedSkill;
@@ -607,23 +652,49 @@
       if (clickedSkill.points > 0) {
         clickedSkill.points--;
         updateSkillPointsCounter();
-        drawTree();
+        scheduleDraw();
       }
       e.preventDefault();
     }
   });
 
-  canvas.addEventListener("mousemove", (e) => {
+  window.addEventListener("mousemove", (e) => {
+    if (isPanning && panLast) {
+      viewOffsetX += e.clientX - panLast.x;
+      viewOffsetY += e.clientY - panLast.y;
+      panLast = {x: e.clientX, y: e.clientY};
+      scheduleDraw();
+      return;
+    }
     if (!isDragging || !draggedSkill) return;
     const pos = getMousePos(e);
     draggedSkill.x = pos.x - dragOffsetX;
     draggedSkill.y = pos.y - dragOffsetY;
-    drawTree();
+    scheduleDraw();
   });
 
-  window.addEventListener("mouseup", () => {
+  window.addEventListener("mouseup", (e) => {
     isDragging = false;
     draggedSkill = null;
+    if (isPanning) {
+      isPanning = false;
+      panLast = null;
+    }
+  });
+
+  // Mouse wheel zoom
+  canvas.addEventListener("wheel", (e) => {
+    if (e.ctrlKey || e.metaKey) return; // allow browser zoom
+    const rect = canvas.getBoundingClientRect();
+    const mouseX = (e.clientX - rect.left - viewOffsetX) / viewScale;
+    const mouseY = (e.clientY - rect.top - viewOffsetY) / viewScale;
+    const zoom = Math.exp(e.deltaY * -0.003);
+    const newScale = Math.max(0.25, Math.min(4, viewScale * zoom));
+    viewOffsetX -= mouseX * (newScale - viewScale);
+    viewOffsetY -= mouseY * (newScale - viewScale);
+    viewScale = newScale;
+    scheduleDraw();
+    e.preventDefault();
   });
 
   // Disable context menu on right click
@@ -639,7 +710,7 @@
       pos.y <= skill.y + skillSize / 2 + hitPadding
     );
     if (!clickedSkill) return;
-    showSkillTooltip(clickedSkill, pos.x, pos.y);
+    showSkillTooltip(clickedSkill, e.clientX, e.clientY);
     setTimeout(hideSkillTooltip, 2000);
   });
 
@@ -654,11 +725,20 @@
   }
 
   canvas.addEventListener("touchstart", function(e) {
+    if (e.touches.length === 2) {
+      pinchStartDist = Math.hypot(
+        e.touches[0].clientX - e.touches[1].clientX,
+        e.touches[0].clientY - e.touches[1].clientY
+      );
+      pinchStartScale = viewScale;
+      pinchStartOffset = {x: viewOffsetX, y: viewOffsetY};
+      return;
+    }
     if (e.touches.length !== 1) return;
     const touch = e.touches[0];
     const rect = canvas.getBoundingClientRect();
-    const x = touch.clientX - rect.left;
-    const y = touch.clientY - rect.top;
+    const x = (touch.clientX - rect.left - viewOffsetX) / viewScale;
+    const y = (touch.clientY - rect.top - viewOffsetY) / viewScale;
     const skill = getSkillAt(x, y);
     if (!skill) return;
 
@@ -673,19 +753,34 @@
     // Setup long press
     longPressTimer = setTimeout(function() {
       longPressTriggered = true;
-      showSkillTooltip(skill, x, y);
-      setTimeout(hideSkillTooltip, 2000);
+      showSkillTooltip(skill, touch.clientX, touch.clientY, true);
     }, 600);
 
     e.preventDefault();
   }, {passive: false});
 
   canvas.addEventListener("touchmove", function(e) {
+    if (e.touches.length === 2 && pinchStartDist) {
+      // Pinch-zoom
+      const dist = Math.hypot(
+        e.touches[0].clientX - e.touches[1].clientX,
+        e.touches[0].clientY - e.touches[1].clientY
+      );
+      const zoom = dist / pinchStartDist;
+      const newScale = Math.max(0.25, Math.min(4, pinchStartScale * zoom));
+      const midX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+      const midY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+      viewOffsetX = pinchStartOffset.x + (midX - canvas.width/2);
+      viewOffsetY = pinchStartOffset.y + (midY - canvas.height/2);
+      viewScale = newScale;
+      scheduleDraw();
+      return;
+    }
     if (!lastTouchSkill) return;
     const touch = e.touches[0];
     const rect = canvas.getBoundingClientRect();
-    const x = touch.clientX - rect.left;
-    const y = touch.clientY - rect.top;
+    const x = (touch.clientX - rect.left - viewOffsetX) / viewScale;
+    const y = (touch.clientY - rect.top - viewOffsetY) / viewScale;
     const dx = x - lastTouchPos.x;
     const dy = y - lastTouchPos.y;
 
@@ -701,21 +796,23 @@
     if (draggingTouchSkill) {
       draggingTouchSkill.x = x - draggingTouchOffset.x;
       draggingTouchSkill.y = y - draggingTouchOffset.y;
-      drawTree();
+      scheduleDraw();
     }
     e.preventDefault();
   }, {passive: false});
 
   canvas.addEventListener("touchend", function(e) {
+    pinchStartDist = null;
+    pinchStartScale = null;
+    pinchStartOffset = null;
     clearTimeout(longPressTimer);
-    hideSkillTooltip();
 
     // If not long-press and not moved, treat as tap (add point)
     if (lastTouchSkill && !touchMoved && !longPressTriggered) {
       if (lastTouchSkill.points < lastTouchSkill.maxPoints) {
         lastTouchSkill.points++;
         updateSkillPointsCounter();
-        drawTree();
+        scheduleDraw();
       }
     }
     // cleanup
@@ -729,12 +826,28 @@
   }, {passive: false});
 
   // ---- TOOLTIP LOGIC ----
-  function showSkillTooltip(skill, px, py) {
+  function showSkillTooltip(skill, px, py, showMinus) {
     skillTooltip.innerHTML =
-      `<b>${skill.name}</b><br><span style="font-size:13px;">${skill.desc || "No description"}</span>`;
+      `<b>${skill.name}</b><br>
+      <span style="font-size:13px;">${skill.desc || "No description"}</span><br>
+      <span style="font-size:14px;">Points: ${skill.points}/${skill.maxPoints}</span>
+      ${showMinus && skill.points > 0 ? `<button class="minus-btn" data-skillid="${skill.id}">-</button>` : ""}`;
     skillTooltip.style.left = (px + 14) + "px";
     skillTooltip.style.top = (py - 26) + "px";
     skillTooltip.style.display = "block";
+    // Attach minus button event
+    if (showMinus && skill.points > 0) {
+      const minusBtn = skillTooltip.querySelector('.minus-btn');
+      minusBtn.onclick = function(ev) {
+        ev.stopPropagation();
+        if (skill.points > 0) {
+          skill.points--;
+          updateSkillPointsCounter();
+          scheduleDraw();
+          hideSkillTooltip();
+        }
+      };
+    }
   }
   function hideSkillTooltip() {
     skillTooltip.style.display = "none";
@@ -751,7 +864,7 @@
       img.onload = () => {
         backgroundImg = img;
         resizeCanvas();
-        drawTree();
+        scheduleDraw();
       };
       img.src = e.target.result;
     };
@@ -831,7 +944,7 @@
       backgroundImg.src = jsonData.backgroundImageData;
       backgroundImg.onload = () => {
         resizeCanvas();
-        drawTree();
+        scheduleDraw();
       };
     } else {
       backgroundImg = null;
@@ -846,7 +959,7 @@
     renderCategoriesList();
     updateSkillPointsCounter();
     resizeCanvas();
-    drawTree();
+    scheduleDraw();
     document.getElementById("shareLink").value = "";
     history.replaceState(null, '', window.location.pathname);
   }
@@ -919,7 +1032,7 @@
       }
     } else {
       resizeCanvas();
-      drawTree();
+      scheduleDraw();
     }
   });
 
@@ -939,6 +1052,7 @@
   document.getElementById("totalMaxPointsInput").addEventListener("change", () => {
     // You can add validation or use max points globally here if needed
   });
+
 </script>
 </body>
 </html>
