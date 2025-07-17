@@ -250,15 +250,15 @@
   let dragOffsetY = 0;
   let hoveredSkill = null;
 
-  // Mobile touch
-  let touchDragging = false;
-  let touchDraggedSkill = null;
-  let touchDragOffsetX = 0;
-  let touchDragOffsetY = 0;
-  let touchLongPressTimer = null;
-  let touchMovedDuringPress = false;
-  let touchLongPressTriggered = false;
-  let touchStartTime = 0;
+  // Mobile touch state
+  let lastTouchSkill = null;
+  let lastTouchStart = 0;
+  let lastTouchPos = null;
+  let touchMoved = false;
+  let longPressTimer = null;
+  let longPressTriggered = false;
+  let draggingTouchSkill = null;
+  let draggingTouchOffset = null;
 
   // Splitter dragging state
   let isResizing = false;
@@ -644,69 +644,89 @@
   });
 
   // ---- MOBILE TOUCH EVENTS ----
-  canvas.addEventListener("touchstart", e => {
+  function getSkillAt(x, y) {
+    return skills.find(skill =>
+      x >= skill.x - skillSize / 2 - hitPadding &&
+      x <= skill.x + skillSize / 2 + hitPadding &&
+      y >= skill.y - skillSize / 2 - hitPadding &&
+      y <= skill.y + skillSize / 2 + hitPadding
+    );
+  }
+
+  canvas.addEventListener("touchstart", function(e) {
     if (e.touches.length !== 1) return;
     const touch = e.touches[0];
-    const pos = getTouchPos(touch);
-    const clickedSkill = skills.find(skill =>
-      pos.x >= skill.x - skillSize / 2 - hitPadding &&
-      pos.x <= skill.x + skillSize / 2 + hitPadding &&
-      pos.y >= skill.y - skillSize / 2 - hitPadding &&
-      pos.y <= skill.y + skillSize / 2 + hitPadding
-    );
-    if (!clickedSkill) return;
+    const rect = canvas.getBoundingClientRect();
+    const x = touch.clientX - rect.left;
+    const y = touch.clientY - rect.top;
+    const skill = getSkillAt(x, y);
+    if (!skill) return;
 
-    touchDragging = true;
-    touchDraggedSkill = clickedSkill;
-    touchDragOffsetX = pos.x - clickedSkill.x;
-    touchDragOffsetY = pos.y - clickedSkill.y;
-    touchMovedDuringPress = false;
-    touchLongPressTriggered = false;
-    touchStartTime = Date.now();
+    lastTouchSkill = skill;
+    lastTouchStart = Date.now();
+    lastTouchPos = {x, y};
+    touchMoved = false;
+    longPressTriggered = false;
+    draggingTouchSkill = null;
+    draggingTouchOffset = null;
 
-    // Long press for skill description (600ms)
-    touchLongPressTimer = setTimeout(() => {
-      touchLongPressTriggered = true;
-      showSkillTooltip(clickedSkill, pos.x, pos.y);
+    // Setup long press
+    longPressTimer = setTimeout(function() {
+      longPressTriggered = true;
+      showSkillTooltip(skill, x, y);
       setTimeout(hideSkillTooltip, 2000);
     }, 600);
 
     e.preventDefault();
-  }, { passive: false });
+  }, {passive: false});
 
-  canvas.addEventListener("touchmove", e => {
-    if (!touchDragging || !touchDraggedSkill) return;
+  canvas.addEventListener("touchmove", function(e) {
+    if (!lastTouchSkill) return;
     const touch = e.touches[0];
-    const pos = getTouchPos(touch);
+    const rect = canvas.getBoundingClientRect();
+    const x = touch.clientX - rect.left;
+    const y = touch.clientY - rect.top;
+    const dx = x - lastTouchPos.x;
+    const dy = y - lastTouchPos.y;
 
-    touchDraggedSkill.x = pos.x - touchDragOffsetX;
-    touchDraggedSkill.y = pos.y - touchDragOffsetY;
-    touchMovedDuringPress = true;
-    drawTree();
-    clearTimeout(touchLongPressTimer);
-    hideSkillTooltip();
+    // If moved enough, treat as drag and cancel long-press
+    if (!touchMoved && (Math.abs(dx) > 8 || Math.abs(dy) > 8)) {
+      touchMoved = true;
+      draggingTouchSkill = lastTouchSkill;
+      draggingTouchOffset = {x: lastTouchPos.x - lastTouchSkill.x, y: lastTouchPos.y - lastTouchSkill.y};
+      clearTimeout(longPressTimer);
+      hideSkillTooltip();
+    }
+
+    if (draggingTouchSkill) {
+      draggingTouchSkill.x = x - draggingTouchOffset.x;
+      draggingTouchSkill.y = y - draggingTouchOffset.y;
+      drawTree();
+    }
     e.preventDefault();
-  }, { passive: false });
+  }, {passive: false});
 
-  canvas.addEventListener("touchend", e => {
-    clearTimeout(touchLongPressTimer);
+  canvas.addEventListener("touchend", function(e) {
+    clearTimeout(longPressTimer);
+    hideSkillTooltip();
 
-    if (touchDragging && touchDraggedSkill) {
-      // Tap (not moved, not long-press) = add point
-      if (!touchMovedDuringPress && !touchLongPressTriggered) {
-        if (touchDraggedSkill.points < touchDraggedSkill.maxPoints) {
-          touchDraggedSkill.points++;
-          updateSkillPointsCounter();
-          drawTree();
-        }
+    // If not long-press and not moved, treat as tap (add point)
+    if (lastTouchSkill && !touchMoved && !longPressTriggered) {
+      if (lastTouchSkill.points < lastTouchSkill.maxPoints) {
+        lastTouchSkill.points++;
+        updateSkillPointsCounter();
+        drawTree();
       }
     }
-    touchDragging = false;
-    touchDraggedSkill = null;
-    touchMovedDuringPress = false;
-    touchLongPressTriggered = false;
+    // cleanup
+    lastTouchSkill = null;
+    lastTouchPos = null;
+    draggingTouchSkill = null;
+    draggingTouchOffset = null;
+    touchMoved = false;
+    longPressTriggered = false;
     e.preventDefault();
-  }, { passive: false });
+  }, {passive: false});
 
   // ---- TOOLTIP LOGIC ----
   function showSkillTooltip(skill, px, py) {
@@ -919,342 +939,6 @@
   document.getElementById("totalMaxPointsInput").addEventListener("change", () => {
     // You can add validation or use max points globally here if needed
   });
-</script>
-</body>
-</html><!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <title>Skill Tree</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-
-  <style>
-    body {
-      margin: 0;
-      font-family: Arial, sans-serif;
-      background-image: url('https://i.imgur.com/F0gUOvj.jpeg');
-      background-size: cover;
-      background-position: center;
-      overflow: hidden;
-      touch-action: none;
-    }
-
-    #toolbar {
-      background: rgba(0,0,0,0.7);
-      color: white;
-      padding: 10px;
-      display: flex;
-      align-items: center;
-      gap: 20px;
-      flex-wrap: wrap;
-    }
-
-    #categories {
-      display: flex;
-      gap: 10px;
-      flex-wrap: wrap;
-    }
-
-    .category {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      background: rgba(255,255,255,0.8);
-      padding: 10px;
-      border-radius: 8px;
-    }
-
-    .category input {
-      width: 100px;
-      text-align: center;
-      border: none;
-      font-weight: bold;
-    }
-
-    #skillTree {
-      position: relative;
-      width: 100vw;
-      height: calc(100vh - 50px);
-      overflow: auto;
-      touch-action: none;
-    }
-
-    .skill {
-      position: absolute;
-      width: 64px;
-      height: 64px;
-      border: 2px solid #333;
-      border-radius: 10px;
-      background-color: #fff;
-      background-size: cover;
-      cursor: grab;
-      user-select: none;
-      display: flex;
-      align-items: flex-end;
-      justify-content: center;
-      font-weight: bold;
-      color: white;
-      text-shadow: 1px 1px 2px black;
-      touch-action: none;
-    }
-
-    .skill:hover {
-      outline: 2px solid yellow;
-    }
-
-    #totalPoints {
-      margin-left: auto;
-      font-weight: bold;
-    }
-
-    .tooltip {
-      position: absolute;
-      background: rgba(0,0,0,0.8);
-      color: white;
-      padding: 5px;
-      border-radius: 5px;
-      pointer-events: none;
-      z-index: 999;
-      white-space: pre-line;
-      max-width: 200px;
-      font-size: 14px;
-      transition: opacity 0.2s;
-    }
-  </style>
-</head>
-<body>
-
-<div id="toolbar">
-  <div id="categories"></div>
-  <div id="totalPoints">Total Points: 0</div>
-</div>
-
-<div id="skillTree"></div>
-<div id="tooltip" class="tooltip" style="display:none;"></div>
-
-<script>
-  const categoriesEl = document.getElementById('categories');
-  const skillTree = document.getElementById('skillTree');
-  const totalPointsEl = document.getElementById('totalPoints');
-  const tooltip = document.getElementById('tooltip');
-
-  let totalPoints = 0;
-
-  const skills = [
-    {
-      id: 'slash',
-      name: 'Slash',
-      category: 'Offense',
-      image: 'https://i.imgur.com/Tq8HBUl.png',
-      description: 'A basic melee attack.',
-      maxPoints: 5,
-      x: 100, y: 100
-    },
-    {
-      id: 'shield',
-      name: 'Shield',
-      category: 'Defense',
-      image: 'https://i.imgur.com/4AiXzf8.png',
-      description: 'Raise a magical shield.',
-      maxPoints: 3,
-      x: 300, y: 150
-    },
-    {
-      id: 'fireball',
-      name: 'Fireball',
-      category: 'Magic',
-      image: 'https://i.imgur.com/r1H0A3N.png',
-      description: 'Cast a fireball spell.',
-      maxPoints: 4,
-      x: 500, y: 100
-    }
-  ];
-
-  const skillState = {};
-
-  function createCategoryInput(name) {
-    const div = document.createElement('div');
-    div.className = 'category';
-    const input = document.createElement('input');
-    input.value = name;
-    input.addEventListener('input', () => {
-      const oldName = name;
-      const newName = input.value.trim() || oldName;
-      skills.forEach(skill => {
-        if (skill.category === oldName) skill.category = newName;
-      });
-      renderCategories();
-    });
-    div.appendChild(input);
-    categoriesEl.appendChild(div);
-  }
-
-  function renderCategories() {
-    categoriesEl.innerHTML = '';
-    [...new Set(skills.map(s => s.category))].forEach(createCategoryInput);
-  }
-
-  function renderSkills() {
-    skillTree.innerHTML = '';
-    skills.forEach(skill => {
-      const div = document.createElement('div');
-      div.className = 'skill';
-      div.style.left = skill.x + 'px';
-      div.style.top = skill.y + 'px';
-      div.style.backgroundImage = `url(${skill.image})`;
-      div.title = skill.name;
-      div.dataset.id = skill.id;
-
-      const points = skillState[skill.id] = { points: 0, max: skill.maxPoints };
-      const pointText = document.createElement('div');
-      pointText.innerText = `0/${skill.maxPoints}`;
-      pointText.style.backgroundColor = 'rgba(0,0,0,0.5)';
-      pointText.style.width = '100%';
-      pointText.style.textAlign = 'center';
-      div.appendChild(pointText);
-
-      let dragging = false;
-      let dragOffsetX = 0, dragOffsetY = 0;
-      let lastTouchX = null, lastTouchY = null;
-      let longPressTimer = null;
-      let movedDuringTouch = false;
-      let longPressActive = false;
-
-      // Desktop drag
-      div.onmousedown = e => {
-        if (e.button !== 0) return;
-        dragging = true;
-        dragOffsetX = e.clientX - skill.x;
-        dragOffsetY = e.clientY - skill.y;
-        e.preventDefault();
-      };
-      document.onmousemove = e => {
-        if (dragging) {
-          skill.x = e.clientX - dragOffsetX;
-          skill.y = e.clientY - dragOffsetY;
-          div.style.left = skill.x + 'px';
-          div.style.top = skill.y + 'px';
-        }
-      };
-      document.onmouseup = e => {
-        dragging = false;
-      };
-
-      // Mobile drag + description
-      div.ontouchstart = e => {
-        if (e.touches.length !== 1) return;
-        const touch = e.touches[0];
-        lastTouchX = touch.clientX;
-        lastTouchY = touch.clientY;
-        dragOffsetX = lastTouchX - skill.x;
-        dragOffsetY = lastTouchY - skill.y;
-        dragging = true;
-        movedDuringTouch = false;
-        longPressActive = false;
-
-        // Long press for description (quicker: 350ms)
-        longPressTimer = setTimeout(() => {
-          longPressActive = true;
-          tooltip.style.left = (lastTouchX + 10) + 'px';
-          tooltip.style.top = (lastTouchY + 10) + 'px';
-          tooltip.innerText = `${skill.name}\n\n${skill.description}`;
-          tooltip.style.display = 'block';
-          tooltip.style.opacity = '1';
-        }, 350);
-
-        e.preventDefault();
-      };
-      div.ontouchmove = e => {
-        if (!dragging) return;
-        const touch = e.touches[0];
-        skill.x = touch.clientX - dragOffsetX;
-        skill.y = touch.clientY - dragOffsetY;
-        div.style.left = skill.x + 'px';
-        div.style.top = skill.y + 'px';
-        lastTouchX = touch.clientX;
-        lastTouchY = touch.clientY;
-        movedDuringTouch = true;
-
-        // Hide tooltip if moving
-        clearTimeout(longPressTimer);
-        tooltip.style.display = 'none';
-        longPressActive = false;
-        e.preventDefault();
-      };
-      div.ontouchend = e => {
-        dragging = false;
-        clearTimeout(longPressTimer);
-
-        // If not moved and no long press, treat as tap (add point)
-        if (!movedDuringTouch && !longPressActive) {
-          if (points.points < points.max) {
-            points.points++;
-            updateTotal();
-            pointText.innerText = `${points.points}/${points.max}`;
-          }
-        }
-        // If long press was active, hide tooltip after finger leaves
-        if (longPressActive) {
-          setTimeout(() => {
-            tooltip.style.display = 'none';
-            longPressActive = false;
-          }, 2000);
-        }
-      };
-
-      // Tap to show description (mobile and desktop)
-      div.addEventListener('click', e => {
-        if (dragging) return;
-        // On desktop, left click adds point; on mobile, tap shows description if touch wasn't a drag
-        if (window.matchMedia('(pointer: coarse)').matches) {
-          tooltip.style.left = (e.pageX + 10) + 'px';
-          tooltip.style.top = (e.pageY + 10) + 'px';
-          tooltip.innerText = `${skill.name}\n\n${skill.description}`;
-          tooltip.style.display = 'block';
-          tooltip.style.opacity = '1';
-          setTimeout(() => {
-            tooltip.style.display = 'none';
-          }, 2000);
-        } else {
-          if (points.points < points.max) {
-            points.points++;
-            updateTotal();
-            pointText.innerText = `${points.points}/${points.max}`;
-          }
-        }
-      });
-
-      // Right click remove point (desktop)
-      div.oncontextmenu = e => {
-        e.preventDefault();
-        if (points.points > 0) {
-          points.points--;
-          updateTotal();
-          pointText.innerText = `${points.points}/${points.max}`;
-        }
-      };
-
-      // Double click shows description on desktop
-      div.ondblclick = e => {
-        tooltip.style.left = (e.pageX + 10) + 'px';
-        tooltip.style.top = (e.pageY + 10) + 'px';
-        tooltip.innerText = `${skill.name}\n\n${skill.description}`;
-        tooltip.style.display = 'block';
-        tooltip.style.opacity = '1';
-        setTimeout(() => tooltip.style.display = 'none', 3000);
-      };
-
-      skillTree.appendChild(div);
-    });
-  }
-
-  function updateTotal() {
-    totalPoints = Object.values(skillState).reduce((sum, s) => sum + s.points, 0);
-    totalPointsEl.textContent = `Total Points: ${totalPoints}`;
-  }
-
-  renderCategories();
-  renderSkills();
 </script>
 </body>
 </html>
