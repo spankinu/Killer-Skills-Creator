@@ -301,6 +301,13 @@
     }
   }
 
+  // Resets pan/zoom to default view
+  function resetPanZoom() {
+    viewScale = 1;
+    viewOffsetX = 0;
+    viewOffsetY = 0;
+  }
+
   splitter.addEventListener('mousedown', (e) => {
     isResizing = true;
     document.body.style.cursor = 'ew-resize';
@@ -317,6 +324,7 @@
 
     controls.style.width = newWidth + 'px';
     resizeCanvas();
+    resetPanZoom();
     scheduleDraw();
   });
 
@@ -325,6 +333,13 @@
       isResizing = false;
       document.body.style.cursor = 'default';
     }
+  });
+
+  // Also reset pan/zoom and redraw on window resize
+  window.addEventListener('resize', () => {
+    resizeCanvas();
+    resetPanZoom();
+    scheduleDraw();
   });
 
   function randomColor() {
@@ -529,10 +544,11 @@
       updateCategorySelect();
       renderCategoriesList();
       updateSkillPointsCounter();
+      resizeCanvas();
+      resetPanZoom();
       scheduleDraw();
       document.getElementById("shareLink").value = "";
       history.replaceState(null, '', window.location.pathname);
-      resizeCanvas();
     }
   }
 
@@ -944,6 +960,7 @@
       backgroundImg.src = jsonData.backgroundImageData;
       backgroundImg.onload = () => {
         resizeCanvas();
+        resetPanZoom();
         scheduleDraw();
       };
     } else {
@@ -959,6 +976,7 @@
     renderCategoriesList();
     updateSkillPointsCounter();
     resizeCanvas();
+    resetPanZoom();
     scheduleDraw();
     document.getElementById("shareLink").value = "";
     history.replaceState(null, '', window.location.pathname);
@@ -1032,6 +1050,7 @@
       }
     } else {
       resizeCanvas();
+      resetPanZoom();
       scheduleDraw();
     }
   });
