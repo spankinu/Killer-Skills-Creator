@@ -1,0 +1,825 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Skill Tree Creator with Embedded Images Export/Import</title>
+<style>
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    background: #181818;
+    color: #eee;
+    font-family: "Segoe UI", sans-serif;
+    overflow: hidden;
+  }
+  #container {
+    display: flex;
+    height: 100vh;
+    width: 100vw;
+    overflow: hidden;
+    user-select: none;
+  }
+  #controls {
+    background: #222;
+    border-right: 2px solid #333;
+    display: flex;
+    flex-direction: column;
+    padding: 12px;
+    min-width: 240px;
+    max-width: 600px;
+    width: 320px;
+    overflow-y: auto;
+    box-sizing: border-box;
+  }
+  #controls h1 {
+    font-size: 20px;
+    margin: 0 0 8px;
+  }
+  .control-group {
+    margin-bottom: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  input[type="text"],
+  input[type="number"],
+  select,
+  input[type="file"] {
+    padding: 6px 8px;
+    background: #333;
+    border: 1px solid #444;
+    color: #eee;
+    border-radius: 4px;
+    min-width: 150px;
+  }
+  select[multiple] {
+    height: 80px;
+  }
+  button {
+    padding: 8px 14px;
+    background: #444;
+    color: #fff;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+  }
+  button:hover {
+    background: #555;
+  }
+  #categoriesList {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-top: 4px;
+  }
+  .category-pill {
+    background: #444;
+    padding: 4px 10px;
+    border-radius: 12px;
+    cursor: pointer;
+    user-select: none;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    border: 2px solid transparent;
+    color: #eee;
+    font-size: 14px;
+    min-width: 100px;
+    justify-content: center;
+  }
+  .category-color {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    display: inline-block;
+    border: 1px solid #999;
+  }
+  .category-pill.editing {
+    background: #222;
+    border-color: #0af;
+  }
+  .category-pill input {
+    background: #222;
+    border: 1px solid #0af;
+    color: #0af;
+    border-radius: 4px;
+    padding: 2px 6px;
+    font-size: 14px;
+    width: 100px;
+    outline: none;
+    text-align: center;
+  }
+  #splitter {
+    width: 6px;
+    background: #333;
+    cursor: ew-resize;
+    user-select: none;
+    position: relative;
+    z-index: 20;
+  }
+  #splitter:hover {
+    background: #0af;
+  }
+  #canvasContainer {
+    flex-grow: 1;
+    position: relative;
+    overflow: auto;
+    background: #111;
+  }
+  #treeCanvas {
+    display: block;
+    background: transparent;
+    image-rendering: pixelated;
+    user-select: none;
+  }
+  #skillPointsCounter {
+    font-weight: bold;
+    margin-top: 6px;
+    text-align: center;
+  }
+  #totalMaxPointsPanel {
+    margin-top: 12px;
+    padding-top: 8px;
+    border-top: 1px solid #444;
+    font-size: 14px;
+    text-align: center;
+  }
+</style>
+</head>
+<body>
+
+<div id="container">
+  <div id="controls">
+    <div class="control-group">
+      <h1>New Skill</h1>
+      <input type="text" id="skillName" placeholder="Skill Name" />
+      <input type="text" id="skillDesc" placeholder="Description" />
+      <input type="file" id="skillImage" accept="image/*" />
+      <label for="skillCategory">Category:</label>
+      <select id="skillCategory"></select>
+      <label for="skillPrereq">Prerequisites:</label>
+      <select id="skillPrereq" multiple></select>
+
+      <label for="skillMaxPoints">Max Skill Points:</label>
+      <input type="number" id="skillMaxPoints" min="1" max="99" value="3" />
+
+      <button onclick="addSkill()">Add Skill</button>
+      <button onclick="resetTree()">Reset</button>
+
+      <div id="skillPointsCounter">Total Skill Points Used: 0</div>
+
+      <div id="totalMaxPointsPanel">
+        <label for="totalMaxPointsInput">Set Max Total Skill Points:</label><br/>
+        <input type="number" id="totalMaxPointsInput" min="1" max="999" value="10" />
+      </div>
+    </div>
+
+    <div class="control-group">
+      <h1>Categories</h1>
+      <div id="categoriesList"></div>
+      <button onclick="addCategory()">Add Category</button>
+    </div>
+
+    <div class="control-group">
+      <h1>Background</h1>
+      <input
+        type="file"
+        id="backgroundImage"
+        accept="image/*"
+        onchange="uploadBackground()"
+      />
+    </div>
+
+    <div class="control-group">
+      <h1>Import / Export</h1>
+      <input type="file" id="importFile" accept=".json" onchange="handleImportFile(event)" />
+      <button onclick="exportProject()">Export Project (JSON)</button>
+    </div>
+
+    <div class="control-group">
+      <h1>Share</h1>
+      <button onclick="generateShareLink()">Generate Share Link</button>
+      <input type="text" id="shareLink" readonly placeholder="Share URL will appear here" />
+    </div>
+  </div>
+
+  <div id="splitter"></div>
+
+  <div id="canvasContainer">
+    <canvas id="treeCanvas"></canvas>
+  </div>
+</div>
+
+<script>
+  const container = document.getElementById('container');
+  const controls = document.getElementById('controls');
+  const splitter = document.getElementById('splitter');
+  const canvasContainer = document.getElementById('canvasContainer');
+  const canvas = document.getElementById('treeCanvas');
+  const ctx = canvas.getContext('2d');
+
+  let skills = [];
+  let categories = [
+    { id: 1, name: "Offense", color: "#e63946" },
+    { id: 2, name: "Defense", color: "#457b9d" },
+    { id: 3, name: "Utility", color: "#f4a261" },
+  ];
+  let backgroundImg = null;
+
+  const skillSize = 60;
+  const hitPadding = 4;
+
+  let isDragging = false;
+  let draggedSkill = null;
+  let dragOffsetX = 0;
+  let dragOffsetY = 0;
+  let hoveredSkill = null;
+
+  // Splitter dragging state
+  let isResizing = false;
+
+  splitter.addEventListener('mousedown', (e) => {
+    isResizing = true;
+    document.body.style.cursor = 'ew-resize';
+    e.preventDefault();
+  });
+
+  window.addEventListener('mousemove', (e) => {
+    if (!isResizing) return;
+    let newWidth = e.clientX;
+    const minWidth = 200;
+    const maxWidth = 600;
+    if (newWidth < minWidth) newWidth = minWidth;
+    if (newWidth > maxWidth) newWidth = maxWidth;
+
+    controls.style.width = newWidth + 'px';
+    resizeCanvas();
+    drawTree();
+  });
+
+  window.addEventListener('mouseup', () => {
+    if (isResizing) {
+      isResizing = false;
+      document.body.style.cursor = 'default';
+    }
+  });
+
+  function randomColor() {
+    const r = Math.floor(150 + Math.random() * 100);
+    const g = Math.floor(150 + Math.random() * 100);
+    const b = Math.floor(150 + Math.random() * 100);
+    return `rgb(${r},${g},${b})`;
+  }
+
+  function updateCategorySelect() {
+    const catSelect = document.getElementById("skillCategory");
+    const selectedValue = catSelect.value;
+    catSelect.innerHTML = "";
+    for (const cat of categories) {
+      const option = document.createElement("option");
+      option.value = cat.id;
+      option.textContent = cat.name;
+      catSelect.appendChild(option);
+    }
+    if (categories.some(c => c.id == selectedValue)) {
+      catSelect.value = selectedValue;
+    }
+  }
+
+  function renderCategoriesList() {
+    const container = document.getElementById("categoriesList");
+    container.innerHTML = "";
+    categories.forEach(cat => {
+      const pill = document.createElement("div");
+      pill.className = "category-pill";
+      pill.style.borderColor = cat.color;
+      pill.title = "Click to rename category";
+
+      const colorDot = document.createElement("span");
+      colorDot.className = "category-color";
+      colorDot.style.backgroundColor = cat.color;
+
+      const nameSpan = document.createElement("span");
+      nameSpan.textContent = cat.name;
+
+      pill.appendChild(colorDot);
+      pill.appendChild(nameSpan);
+
+      pill.addEventListener("click", () => {
+        if (pill.classList.contains("editing")) return;
+        pill.classList.add("editing");
+        const input = document.createElement("input");
+        input.type = "text";
+        input.value = cat.name;
+        pill.replaceChild(input, nameSpan);
+        input.focus();
+
+        input.addEventListener("blur", () => finishRename(cat.id, input.value.trim()));
+        input.addEventListener("keydown", (e) => {
+          if (e.key === "Enter") {
+            input.blur();
+          }
+        });
+      });
+
+      container.appendChild(pill);
+    });
+  }
+
+  function finishRename(catId, newName) {
+    if (!newName) {
+      alert("Category name cannot be empty.");
+      renderCategoriesList();
+      return;
+    }
+    if (categories.some(c => c.name.toLowerCase() === newName.toLowerCase() && c.id !== catId)) {
+      alert("Category name must be unique.");
+      renderCategoriesList();
+      return;
+    }
+    const cat = categories.find(c => c.id === catId);
+    if (cat) {
+      cat.name = newName;
+      renderCategoriesList();
+      updateCategorySelect();
+      drawTree();
+    }
+  }
+
+  function addCategory() {
+    const newId = categories.length ? Math.max(...categories.map(c => c.id)) + 1 : 1;
+    const newCat = { id: newId, name: "New Category", color: randomColor() };
+    categories.push(newCat);
+    renderCategoriesList();
+    updateCategorySelect();
+  }
+
+  function getCategoryColor(catId) {
+    const cat = categories.find(c => c.id == catId);
+    return cat ? cat.color : "#777";
+  }
+
+  function getMousePos(evt) {
+    const rect = canvas.getBoundingClientRect();
+    return {
+      x: evt.clientX - rect.left,
+      y: evt.clientY - rect.top
+    };
+  }
+
+  function updateSkillPointsCounter() {
+    const totalPoints = skills.reduce((sum, s) => sum + s.points, 0);
+    document.getElementById("skillPointsCounter").textContent =
+      `Total Skill Points Used: ${totalPoints}`;
+  }
+
+  function addSkill() {
+    const name = document.getElementById("skillName").value.trim();
+    const desc = document.getElementById("skillDesc").value.trim();
+    const prereqOptions = document.getElementById("skillPrereq").selectedOptions;
+    const prereq = Array.from(prereqOptions).map((opt) => Number(opt.value));
+    const imageFile = document.getElementById("skillImage").files[0];
+    const categoryId = Number(document.getElementById("skillCategory").value);
+
+    const maxPointsInput = document.getElementById("skillMaxPoints");
+    const maxPoints = Math.max(1, Math.min(99, Number(maxPointsInput.value) || 3));
+
+    if (!name) {
+      alert("Please enter a skill name.");
+      return;
+    }
+
+    if (!categories.some(c => c.id === categoryId)) {
+      alert("Please select a valid category.");
+      return;
+    }
+
+    const id = Date.now();
+    const margin = skillSize;
+    const x = Math.min(
+      Math.max(Math.random() * (canvas.width - 2 * margin) + margin, margin),
+      canvas.width - margin
+    );
+    const y = Math.min(
+      Math.max(Math.random() * (canvas.height - 2 * margin) + margin, margin),
+      canvas.height - margin
+    );
+
+    function finishAdding(imgData, imgObj) {
+      skills.push({
+        id,
+        name,
+        desc,
+        prereq,
+        x,
+        y,
+        image: imgData,
+        img: imgObj,
+        showDescription: false,
+        categoryId,
+        points: 0,
+        maxPoints: maxPoints,
+      });
+      updatePrereqDropdown();
+      updateSkillPointsCounter();
+      drawTree();
+
+      document.getElementById("skillName").value = "";
+      document.getElementById("skillDesc").value = "";
+      document.getElementById("skillPrereq").value = "";
+      document.getElementById("skillImage").value = "";
+      document.getElementById("skillMaxPoints").value = 3;
+      updateCategorySelect();
+    }
+
+    if (imageFile) {
+      const reader = new FileReader();
+      reader.onload = function (e) {
+        const imageData = e.target.result;
+        const img = new Image();
+        img.onload = () => finishAdding(imageData, img);
+        img.src = imageData;
+      };
+      reader.readAsDataURL(imageFile);
+      return;
+    }
+
+    finishAdding(null, null);
+  }
+
+  function resetTree() {
+    if (confirm("Are you sure you want to reset? This will clear all skills, categories, and background.")) {
+      skills = [];
+      backgroundImg = null;
+      categories = [
+        { id: 1, name: "Offense", color: "#e63946" },
+        { id: 2, name: "Defense", color: "#457b9d" },
+        { id: 3, name: "Utility", color: "#f4a261" },
+      ];
+      updatePrereqDropdown();
+      updateCategorySelect();
+      renderCategoriesList();
+      updateSkillPointsCounter();
+      drawTree();
+      document.getElementById("shareLink").value = "";
+      history.replaceState(null, '', window.location.pathname);
+      resizeCanvas();
+    }
+  }
+
+  function resizeCanvas() {
+    const containerRect = canvasContainer.getBoundingClientRect();
+    let maxX = 0, maxY = 0;
+    skills.forEach(skill => {
+      if (skill.x > maxX) maxX = skill.x;
+      if (skill.y > maxY) maxY = skill.y;
+    });
+
+    const padding = 100;
+    const w = Math.max(containerRect.width, maxX + padding);
+    const h = Math.max(containerRect.height, maxY + padding);
+
+    canvas.width = w;
+    canvas.height = h;
+    canvas.style.width = w + "px";
+    canvas.style.height = h + "px";
+  }
+
+  function drawTree() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    if (backgroundImg) {
+      const bgX = (canvas.width - backgroundImg.width) / 2;
+      const bgY = (canvas.height - backgroundImg.height) / 2;
+      ctx.drawImage(backgroundImg, bgX, bgY);
+    }
+
+    for (let skill of skills) {
+      if (skill.prereq && skill.prereq.length) {
+        skill.prereq.forEach(prereqId => {
+          const from = skills.find(s => s.id === prereqId);
+          if (from) {
+            ctx.beginPath();
+            ctx.moveTo(from.x, from.y);
+            ctx.lineTo(skill.x, skill.y);
+            ctx.strokeStyle = "#0f0";
+            ctx.lineWidth = 2;
+            ctx.stroke();
+          }
+        });
+      }
+    }
+
+    for (let skill of skills) {
+      ctx.fillStyle = "#444";
+      ctx.fillRect(skill.x - skillSize / 2, skill.y - skillSize / 2, skillSize, skillSize);
+
+      ctx.strokeStyle = getCategoryColor(skill.categoryId);
+      ctx.lineWidth = 3;
+      ctx.strokeRect(skill.x - skillSize / 2, skill.y - skillSize / 2, skillSize, skillSize);
+
+      if (skill.img && skill.img.complete) {
+        const padding = 6;
+        const drawSize = skillSize - padding * 2;
+        ctx.drawImage(skill.img, skill.x - drawSize / 2, skill.y - drawSize / 2, drawSize, drawSize);
+      } else {
+        ctx.fillStyle = "#fff";
+        ctx.font = "16px Arial";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(skill.name[0] || "?", skill.x, skill.y);
+      }
+
+      ctx.fillStyle = "#0ff";
+      ctx.font = "bold 14px Arial";
+      ctx.textAlign = "right";
+      ctx.fillText(`${skill.points}/${skill.maxPoints}`, skill.x + skillSize / 2 - 6, skill.y + skillSize / 2 - 6);
+
+      if (skill.showDescription) {
+        const padding = 6;
+        const text = skill.desc || "No description";
+        const maxWidth = 160;
+        ctx.font = "14px Arial";
+        ctx.textAlign = "left";
+        ctx.fillStyle = "rgba(0,0,0,0.8)";
+        ctx.fillRect(skill.x + skillSize / 2 + 10, skill.y - skillSize / 2, maxWidth, 40);
+        ctx.fillStyle = "#0ff";
+        ctx.fillText(text, skill.x + skillSize / 2 + 15, skill.y - skillSize / 2 + 20);
+      }
+    }
+  }
+
+  function updatePrereqDropdown() {
+    const prereqSelect = document.getElementById("skillPrereq");
+    prereqSelect.innerHTML = "";
+    for (let skill of skills) {
+      const opt = document.createElement("option");
+      opt.value = skill.id;
+      opt.textContent = skill.name;
+      prereqSelect.appendChild(opt);
+    }
+  }
+
+  // Canvas mouse events for dragging and skill points add/remove
+  canvas.addEventListener("mousedown", (e) => {
+    const pos = getMousePos(e);
+    const clickedSkill = skills.find(skill =>
+      pos.x >= skill.x - skillSize / 2 - hitPadding &&
+      pos.x <= skill.x + skillSize / 2 + hitPadding &&
+      pos.y >= skill.y - skillSize / 2 - hitPadding &&
+      pos.y <= skill.y + skillSize / 2 + hitPadding
+    );
+    if (!clickedSkill) return;
+
+    if (e.button === 0) { // Left click = add skill points
+      if (clickedSkill.points < clickedSkill.maxPoints) {
+        clickedSkill.points++;
+        updateSkillPointsCounter();
+        drawTree();
+      }
+      isDragging = true;
+      draggedSkill = clickedSkill;
+      dragOffsetX = pos.x - clickedSkill.x;
+      dragOffsetY = pos.y - clickedSkill.y;
+      e.preventDefault();
+    } else if (e.button === 2) { // Right click = remove skill points
+      if (clickedSkill.points > 0) {
+        clickedSkill.points--;
+        updateSkillPointsCounter();
+        drawTree();
+      }
+      e.preventDefault();
+    }
+  });
+
+  canvas.addEventListener("mousemove", (e) => {
+    if (!isDragging || !draggedSkill) return;
+    const pos = getMousePos(e);
+    draggedSkill.x = pos.x - dragOffsetX;
+    draggedSkill.y = pos.y - dragOffsetY;
+    drawTree();
+  });
+
+  window.addEventListener("mouseup", () => {
+    isDragging = false;
+    draggedSkill = null;
+  });
+
+  // Disable context menu on right click
+  canvas.addEventListener("contextmenu", e => e.preventDefault());
+
+  // Double click toggles static description box
+  canvas.addEventListener("dblclick", e => {
+    const pos = getMousePos(e);
+    const clickedSkill = skills.find(skill =>
+      pos.x >= skill.x - skillSize / 2 - hitPadding &&
+      pos.x <= skill.x + skillSize / 2 + hitPadding &&
+      pos.y >= skill.y - skillSize / 2 - hitPadding &&
+      pos.y <= skill.y + skillSize / 2 + hitPadding
+    );
+    if (!clickedSkill) return;
+    clickedSkill.showDescription = !clickedSkill.showDescription;
+    drawTree();
+  });
+
+  // Background image upload
+  function uploadBackground() {
+    const file = document.getElementById("backgroundImage").files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = e => {
+      const img = new Image();
+      img.onload = () => {
+        backgroundImg = img;
+        resizeCanvas();
+        drawTree();
+      };
+      img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+  }
+
+  // Convert Image object to base64 string using canvas
+  function getImageBase64(img) {
+    const tempCanvas = document.createElement("canvas");
+    tempCanvas.width = img.width;
+    tempCanvas.height = img.height;
+    const tempCtx = tempCanvas.getContext("2d");
+    tempCtx.drawImage(img, 0, 0);
+    return tempCanvas.toDataURL();
+  }
+
+  // Export project JSON with embedded images
+  function exportProject() {
+    const exportData = {
+      skills: skills.map(skill => ({
+        id: skill.id,
+        name: skill.name,
+        desc: skill.desc,
+        prereq: skill.prereq,
+        x: skill.x,
+        y: skill.y,
+        categoryId: skill.categoryId,
+        points: skill.points,
+        maxPoints: skill.maxPoints,
+        imageData: skill.image || null,
+      })),
+      categories,
+      backgroundImageData: backgroundImg ? getImageBase64(backgroundImg) : null,
+      totalMaxPoints: Number(document.getElementById("totalMaxPointsInput").value) || 10,
+    };
+
+    const jsonStr = JSON.stringify(exportData, null, 2);
+    const blob = new Blob([jsonStr], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "skill-tree-export.json";
+    a.click();
+
+    URL.revokeObjectURL(url);
+  }
+
+  // Import project from JSON file
+  function importProject(jsonData) {
+    skills = jsonData.skills.map(s => {
+      let imgObj = null;
+      if (s.imageData) {
+        imgObj = new Image();
+        imgObj.src = s.imageData;
+      }
+      return {
+        id: s.id,
+        name: s.name,
+        desc: s.desc,
+        prereq: s.prereq,
+        x: s.x,
+        y: s.y,
+        categoryId: s.categoryId,
+        points: s.points,
+        maxPoints: s.maxPoints,
+        image: s.imageData,
+        img: imgObj,
+        showDescription: false,
+      };
+    });
+
+    categories = jsonData.categories || categories;
+
+    if (jsonData.backgroundImageData) {
+      backgroundImg = new Image();
+      backgroundImg.src = jsonData.backgroundImageData;
+      backgroundImg.onload = () => {
+        resizeCanvas();
+        drawTree();
+      };
+    } else {
+      backgroundImg = null;
+    }
+
+    if(jsonData.totalMaxPoints) {
+      document.getElementById("totalMaxPointsInput").value = jsonData.totalMaxPoints;
+    }
+
+    updatePrereqDropdown();
+    updateCategorySelect();
+    renderCategoriesList();
+    updateSkillPointsCounter();
+    resizeCanvas();
+    drawTree();
+    document.getElementById("shareLink").value = "";
+    history.replaceState(null, '', window.location.pathname);
+  }
+
+  // Handle import file input
+  function handleImportFile(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = e => {
+      try {
+        const data = JSON.parse(e.target.result);
+        importProject(data);
+      } catch (err) {
+        alert("Invalid JSON file.");
+      }
+    };
+    reader.readAsText(file);
+  }
+
+  // Generate shareable URL with base64 JSON encoded in URL fragment
+  function generateShareLink() {
+    const exportData = {
+      skills: skills.map(skill => ({
+        id: skill.id,
+        name: skill.name,
+        desc: skill.desc,
+        prereq: skill.prereq,
+        x: skill.x,
+        y: skill.y,
+        categoryId: skill.categoryId,
+        points: skill.points,
+        maxPoints: skill.maxPoints,
+        imageData: skill.image || null,
+      })),
+      categories,
+      backgroundImageData: backgroundImg ? getImageBase64(backgroundImg) : null,
+      totalMaxPoints: Number(document.getElementById("totalMaxPointsInput").value) || 10,
+    };
+
+    const jsonStr = JSON.stringify(exportData);
+    // Encode URI component base64 to avoid URL issues
+    const encoded = btoa(unescape(encodeURIComponent(jsonStr)));
+
+    const url = `${window.location.origin}${window.location.pathname}#data=${encoded}`;
+
+    const shareInput = document.getElementById("shareLink");
+    shareInput.value = url;
+    shareInput.select();
+    shareInput.setSelectionRange(0, 99999);
+    document.execCommand('copy');
+    alert("Shareable link generated and copied to clipboard!");
+  }
+
+  // Load project data from URL if present on page load
+  window.addEventListener("load", () => {
+    updateCategorySelect();
+    renderCategoriesList();
+
+    const hash = window.location.hash;
+    if (hash.startsWith("#data=")) {
+      try {
+        const encoded = hash.substring(6);
+        const jsonStr = decodeURIComponent(escape(atob(encoded)));
+        const data = JSON.parse(jsonStr);
+        importProject(data);
+      } catch (err) {
+        console.error("Failed to load project from URL:", err);
+      }
+    } else {
+      resizeCanvas();
+      drawTree();
+    }
+  });
+
+  // Initialize prereq dropdown each time
+  function updatePrereqDropdown() {
+    const prereqSelect = document.getElementById("skillPrereq");
+    prereqSelect.innerHTML = "";
+    for (let skill of skills) {
+      const option = document.createElement("option");
+      option.value = skill.id;
+      option.textContent = skill.name;
+      prereqSelect.appendChild(option);
+    }
+  }
+
+  // Update max total skill points control effect
+  document.getElementById("totalMaxPointsInput").addEventListener("change", () => {
+    // You can add validation or use max points globally here if needed
+  });
+</script>
+</body>
+</html>
